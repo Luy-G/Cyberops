@@ -5,9 +5,8 @@ using NCalc;
 
 namespace CyberOps.Application.Scoring;
 
-// Cada dominio sabe calcular o seu proprio score.
-// O processor principal recebe uma lista de dominios ativos e chama Calculate(...)
-// para cada um deles.
+// cada dominio sabe calcular o seu proprio score
+// processor principal recebe uma lista de dominios ativos e chama Calculate() para cada um deles
 public interface IDomain
 {
     DomainKey Key { get; }
@@ -15,8 +14,7 @@ public interface IDomain
     decimal Calculate(DomainContext context);
 }
 
-// Pesos globais dos 7 dominios da dashboard.
-// Estes valores representam importancia relativa no score composto final.
+// Pesos 
 public static class DomainWeights
 {
     public const decimal ThreatLandscape = 0.18m;
@@ -28,9 +26,8 @@ public static class DomainWeights
     public const decimal HumanRisk = 0.10m;
 }
 
-// Contexto minimo que um dominio precisa para calcular:
-// dados ingeridos (tickets/findings) + configuracoes de calculo por cliente.
-// Esta classe e partilhada entre todos os dominios para simplificar o contrato.
+// dados ingeridos (tickets/findings) + configuracoes de calculo por cliente
+// classe partilhada entre todos os dominios para simplificar o contrato
 public class DomainContext
 {
     public required long ClientId { get; init; }
@@ -40,9 +37,7 @@ public class DomainContext
     public ClientVulnCalcs? VulnCalcs { get; init; }
 }
 
-// Wrapper simples para NCalc.
-// A ideia e receber uma formula em texto + parametros ja preparados e obter o valor final.
-// Isto concretiza o padrao "PreCalc primeiro, formula depois".
+// receber uma formula em texto + parametros ja preparados e obter o valor final
 public static class NCalcEvaluator
 {
     public static decimal Evaluate(string expression, Dictionary<string, object> parameters)
@@ -65,8 +60,8 @@ public class OperationalSecurityDomain : IDomain
 
     private static readonly IReadOnlyList<(IMetric Metric, decimal Weight)> Metrics =
     [
-        // Cada metrica expone uma expression NCalc (definida em Domain/Entity.cs).
-        // Aqui so compomos a lista de metricas ativas e o peso interno de cada uma.
+        // cada metrica expone uma expression NCalc (definida em Domain/Entity.cs)
+        // so compomos a lista de metricas ativas e o peso interno de cada uma
         (new OpenTicketsMetric(), OperationalSecurityWeights.OpenTickets),
         (new MttrMetric(), OperationalSecurityWeights.Mttr),
         (new SlaComplianceMetric(), OperationalSecurityWeights.SlaCompliance),
@@ -74,26 +69,25 @@ public class OperationalSecurityDomain : IDomain
 
     public decimal Calculate(DomainContext context)
     {
-        // Sem dados ITSM nao ha como calcular Operational Security.
+        // sem dados ITSM nao ha como calcular Operational Security
         if (context.ItsmCalcs is null || !context.ItsmTickets.Any())
         {
             return 0m;
         }
 
-        // 1) Prepara variaveis simples (contagens/ratios/medias).
+        // prepara variaveis simples (contagens/ratios/medias)
         var parameters = PreCalc(context);
 
-        // 2) Aplica formula de cada metrica via NCalc.
+        // aplica formula de cada metrica via NCalc.
         var weighted = Metrics.Sum(metric =>
             NCalcEvaluator.Evaluate(metric.Metric.Expression, parameters) * metric.Weight);
 
-        // 3) Normaliza pelo peso total ativo para score final do dominio.
+        // normaliza pelo peso total ativo para score final do dominio
         return weighted / OperationalSecurityWeights.TotalActiveWeight;
     }
 
     private static Dictionary<string, object> PreCalc(DomainContext context)
     {
-        // PreCalc concentra toda preparacao de dados para evitar expressions complexas.
         var tickets = context.ItsmTickets;
 
         var openTickets = tickets.Count(t => t.Status == ItsmStatus.InProgress);
@@ -114,8 +108,7 @@ public class OperationalSecurityDomain : IDomain
             ? 0m
             : (decimal)closedWithSla.Count(t => t.FirstResponseSlaBreached == false) / closedWithSla.Count;
 
-        // Parametros usados pelas expressions OpenTicketsMetric/MttrMetric/SlaComplianceMetric.
-        // NCalc trabalha melhor com double, por isso o cast.
+        // parametros usados pelas expressions OpenTicketsMetric/MttrMetric/SlaComplianceMetric
         return new Dictionary<string, object>
         {
             ["OpenTickets"] = (double)openTickets,
@@ -135,8 +128,8 @@ public class VulnerabilityAndAttackSurfaceDomain : IDomain
 
     private static readonly IReadOnlyList<(IMetric Metric, decimal Weight)> Metrics =
     [
-        // Mesmo padrao do dominio ITSM:
-        // metricas declarativas + pesos internos + NCalc.
+        // mesmo padrao do dominio ITSM
+        // metricas declarativas + pesos internos + NCalc
         (new CriticalVulnsMetric(), VulnerabilityWeights.CriticalVulns),
         (new HighVulnsMetric(), VulnerabilityWeights.HighVulns),
         (new PublicExploitMetric(), VulnerabilityWeights.PublicExploit),
@@ -147,32 +140,32 @@ public class VulnerabilityAndAttackSurfaceDomain : IDomain
 
     public decimal Calculate(DomainContext context)
     {
-        // Sem findings nao ha base para score de vulnerabilidade.
+        // sem findings nao ha base para score de vulnerabilidade
         if (!context.VulnFindings.Any())
         {
             return 0m;
         }
 
-        // Preparacao dos parametros para formulas NCalc.
+        // preparacao dos parametros para formulas NCalc
         var parameters = PreCalc(context);
 
         var weighted = Metrics.Sum(metric =>
             NCalcEvaluator.Evaluate(metric.Metric.Expression, parameters) * metric.Weight);
 
-        // Normalizacao pelo peso efetivamente ativo.
+        // normalizacao pelo peso efetivamente ativo
         return weighted / VulnerabilityWeights.TotalActiveWeight;
     }
 
     private static Dictionary<string, object> PreCalc(DomainContext context)
     {
-        // Para as metricas de risco (critical/high/exploit/kev/exposure),
+        // para as metricas de risco (critical/high/exploit/kev/exposure),
         // ignoramos severidades pouco relevantes.
         var findings = context.VulnFindings
             .Where(f => f.Severity != VulnSeverity.Info && f.Severity != VulnSeverity.Unknown)
             .ToList();
 
-        // Para scan coverage, o criterio acordado e:
-        // findings com CVE / total de findings (sem filtro de severidade).
+        // para scan coverage, o criterio acordado é
+        // findings com CVE / total de findings (sem filtro de severidade)
         var allFindings = context.VulnFindings.ToList();
 
         var meaningfulCount = findings.Count;
@@ -195,8 +188,8 @@ public class VulnerabilityAndAttackSurfaceDomain : IDomain
         var totalFindingsCount = allFindings.Count;
         var scanCoverageRatio = totalFindingsCount == 0 ? 0m : (decimal)withCveCount / totalFindingsCount;
 
-        // Parametros "prontos a usar" nas expressions das metricas.
-        // Tambem inclui thresholds centralizados em Common/Constants.
+        // parametros a usar nas expressions das metricas
+        // inclui thresholds centralizados em Common/Constants
         return new Dictionary<string, object>
         {
             ["MeaningfulFindings"] = (double)meaningfulCount,
@@ -261,9 +254,8 @@ public class HumanRiskDomain : IDomain
 
 public static class CompositeScoreCalculator
 {
-    // Calcula score final do cliente a partir dos scores de dominios disponiveis.
-    // Em ambiente multi-cliente/multi-fonte, nem todos os dominios estao presentes:
-    // por isso somamos apenas os que existem e normalizamos pelo peso total usado.
+    // calcula score final do cliente a partir dos scores de dominios disponiveis
+    // somamos apenas os que existem e normalizamos pelo peso total usado
     public static decimal Calculate(IReadOnlyDictionary<DomainKey, decimal> domainScores)
     {
         if (domainScores.Count == 0)
